@@ -1,85 +1,136 @@
 package com.tyfann.redis2021;
 
-import redis.clients.jedis.Jedis;
-
-import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Set;
 
 /**
  * @author tyfann
  * @date 2021/1/27 3:47 下午
  */
 public class RedisTrie {
-    private class TrieNode{
-        private int prefix_num;
 
-        private TrieNode childs[];
+
+
+    private class TrieNode{
+
+        private TrieNode[] childs;
+        // 是否为叶子节点
         private boolean isLeaf;
-        public TrieNode(){
-            prefix_num = 0;
-            isLeaf = false;
-            childs = new TrieNode[128];
+        // 是否是类似 {id} 这样的表达式
+        private boolean isRegular;
+        // 是否为模糊匹配
+        private boolean isWild;
+
+        String part;
+        String path;
+
+        public TrieNode(String part,String path) {
+            this.part = part;
+            this.path = path;
+            this.isLeaf = false;
+            this.isWild = false;
+            this.isRegular = false;
+            this.childs = null;
+        }
+
+        public int query(String childNode) {
+            if (this.childs == null){
+                return -1;
+            }
+            for (int i =0;i< this.childs.length;i++){
+                if (this.childs[i].part.equals(childNode)){
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        public boolean containRegular(){
+            for (int i =0;i< this.childs.length;i++){
+                if (this.childs[i].isRegular){
+                    return true;
+                }
+            }
+            return false;
         }
     }
 
     private TrieNode root;
 
     public RedisTrie() {
-        root = new TrieNode();
+        root = new TrieNode(null,null);
     }
 
     /**
      * 插入字串，用循环取代迭代实现
-     * @param words
+     * @param path
      */
-    public void insert(String words){
-        insert(this.root,words);
+    public void insert(String path){
+        insert(this.root,path);
     }
 
 
     /**
      * 插入字串，用循环取代迭代实现
      * @param root
-     * @param words
+     * @param path
      */
-    private void insert(TrieNode root,String words){
-        words=words.toLowerCase();
-        char[] chrs=words.toCharArray();
+    private void insert(TrieNode root,String path){
+        String[] wordsArr = path.split("\\/");
+        String[] notNullArr = new String[wordsArr.length-1];
+        for (int i =1;i<wordsArr.length;i++){
+            notNullArr[i-1] = wordsArr[i];
+        }
 
-        for(int i=0,length=chrs.length; i<length; i++){
-            ///用ASCII码来作为下标索引
-            int index = chrs[i];
-            if(root.childs[index]!=null){
-                //已经存在了，该子节点prefix_num++
+        for(int i=0,length=notNullArr.length; i<length; i++){
+
+            int index = root.query(notNullArr[i]);
+            if(index>=0){
             }else{
                 ///如果不存在
-                root.childs[index]=new TrieNode();
+                if (root.childs == null) {
+                    root.childs = new TrieNode[1];
+                }else {
+                    TrieNode[] temp = root.childs;
+                    root.childs = new TrieNode[root.childs.length+1];
+                    for (int j =0;j<temp.length;j++){
+                        root.childs[j] = temp[j];
+                    }
+                }
+
+                String localPath = null;
+                for (int j =0;j<=i;j++){
+                    if (localPath == null) {
+                        localPath = "/";
+                        localPath = localPath + notNullArr[j];
+                    }else {
+                        localPath = localPath + "/";
+                        localPath = localPath + notNullArr[j];
+                    }
+                }
+
+                root.childs[root.childs.length-1] = new TrieNode(notNullArr[i],localPath);
+                if (notNullArr[i].contains("{") && notNullArr[i].contains("}")){
+                    root.childs[root.childs.length-1].isRegular = true;
+                }
             }
-            root.childs[index].prefix_num++;
 
             ///如果到了字串结尾，则做标记
             if(i == length-1){
-                root.childs[index].isLeaf=true;
+                int tailIndex = root.query(notNullArr[i]);
+                root.childs[tailIndex].isLeaf=true;
             }
-            ///root指向子节点，继续处理
-            root=root.childs[index];
+            // root指向子节点，继续处理
+            if (index>=0){
+                root = root.childs[index];
+            } else {
+                root = root.childs[root.childs.length-1];
+            }
         }
 
     }
 
 
 
-
-    /**
-     * 遍历Trie树，查找所有的words以及出现次数
-     * @return HashMap<String, Integer> map
-     */
-    public HashSet<String> getAllWords(){
-//		HashMap<String, Integer> map=new HashMap<String, Integer>();
-
-        return preTraversal(this.root, "");
-    }
 
     /**
      * 前序遍历
@@ -91,26 +142,22 @@ public class RedisTrie {
         HashSet<String> prefixSet=new HashSet<String>();
         if(root!=null){
 
-            if(root.isLeaf==true){
+            if(root.isLeaf == true){
                 //当前即为一个单词
-                prefixSet.add(prefixs);
+                prefixSet.add(root.path);
             }
 
-            for(int i=0,length=root.childs.length; i<length;i++){
-                if(root.childs[i]!=null){
-                    char ch=(char) (i);
-                    //递归调用前序遍历
+            if (root.childs != null){
+                for(int i=0,length=root.childs.length; i<length;i++){
+                    String prefixPath = prefixs + "/" + root.childs[i].part;
+                    prefixSet.addAll(preTraversal(root.childs[i],prefixPath));
 
-                    String tempStr=prefixs+ch;
-                    prefixSet.addAll(preTraversal(root.childs[i], tempStr));
                 }
             }
         }
 
         return prefixSet;
     }
-
-
 
 
     /**
@@ -127,18 +174,28 @@ public class RedisTrie {
      * @return true if exists ,otherwise  false
      */
     private boolean search(TrieNode root,String word){
-        char[] chs=word.toLowerCase().toCharArray();
-        for(int i=0,length=chs.length; i<length;i++){
-            int index=chs[i];
-            if(root.childs[index]==null){
-                ///如果不存在，则查找失败
-                return false;
+        String[] wordsArr = word.split("\\/");
+        String[] notNullArr = new String[wordsArr.length-1];
+        for (int i =1;i<wordsArr.length;i++){
+            notNullArr[i-1] = wordsArr[i];
+        }
+
+        for(int i=0,length=notNullArr.length; i<length;i++){
+
+            int index = root.query(notNullArr[i]);
+            if(root.query(notNullArr[i]) < 0){
+                if (!root.containRegular()){
+                    return false;
+                } else {
+                    return true;
+                }
             }
             root=root.childs[index];
         }
 
         return true;
     }
+
 
     /**
      * 得到以某字串为前缀的字串集，包括字串本身！ 类似单词输入法的联想功能
@@ -155,15 +212,19 @@ public class RedisTrie {
      * @return 字串集以及出现次数
      */
     private HashSet<String> getWordsForPrefix(TrieNode root, String prefix){
-        char[] chrs=prefix.toLowerCase().toCharArray();
+        String[] wordsArr = prefix.split("\\/");
+        String[] notNullArr = new String[wordsArr.length-1];
+        for (int i =1;i<wordsArr.length;i++){
+            notNullArr[i-1] = wordsArr[i];
+        }
 
-        for(int i=0, length=chrs.length; i<length; i++){
 
-            int index=chrs[i];
-            if(root.childs[index]==null){
+        for(int i=0, length=notNullArr.length; i<length; i++){
+
+            int index = root.query(notNullArr[i]);
+            if (index < 0){
                 return null;
             }
-
             root=root.childs[index];
 
         }
